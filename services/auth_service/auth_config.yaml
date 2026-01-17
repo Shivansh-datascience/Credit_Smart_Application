@@ -1,0 +1,37 @@
+#Redis Configuration for OTP session Storage
+redis:
+  host: "127.0.0.1"  #redis Running server address
+  port: 6379  #redis Running server port
+  db: 0  #redis database number 
+  password: null  #redis password if required for authentication
+  ttl: 300  #redis storage otp session time limit (300 seconds)
+
+#OTP Configuration 
+otp:
+  interval: 60  #otp valid for 60 seconds 
+  valid_window: 0  #verification process (0 - strictly validate with time limit)
+  digits: 6   #generate 6 digits OTP number 
+
+#Fast2sms configuartion
+Fast2sms:
+  url: "https://www.fast2sms.com/dev/bulkV2"
+  sender_id: "FSTSMS"
+#email Integration configuration
+notification:
+  email:
+    email_sender: "shivanshbajpai2011@gmail.com"
+    email_password: "uogqgbhfpatqrbnc"
+
+  server:
+    email-server: "smtp.gmail.com"
+    email-port: 587
+    TLS: Yes
+
+
+#fast API server configuration
+server:
+  host: "0.0.0.0"  #server host for Auth interferance
+  port: 8000  #server port
+  debug: false
+  cors_origins: "http://localhost:3000"
+
