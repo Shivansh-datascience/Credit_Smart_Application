@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Credit Scoring Prediction Service",
               version="1.0.0",
               desctiption="ML -based credit scoring prediction service")
+app.state.session = 0  #define an static session to count occurence of request 
+max_retry_limit = 5    #store an maximum retry limit 
+window_limit = 60   #set 60 seconds time limit for request user 
+
+#define state session
 routers = APIRouter()
 
 #create an Tracking variable for Model tracking events (load or Fail)
@@ -89,15 +94,13 @@ def check_high_risk_rows(row):
     return check_data  #return the check data if condition satisfied
 
 def decide_class(avg_prob):
-    """
-    If class 2 probability is reasonably high, prefer class 2.
-    Otherwise, take argmax.
-    """
-    if avg_prob[2] >= 0.35 and (avg_prob[2] - avg_prob[1]) >= -0.05:
+    # Only force Class 2 if probability is high enough
+    if avg_prob[2] >= 0.40 and (avg_prob[2] - avg_prob[1]) >= -0.05:
         return 2
     return np.argmax(avg_prob)
 
-    
+
+
 #create an method to build an hybrid decision model function
 def build_hybrid_decision_function(xgb_prob, catboost_prob, df):
     """
@@ -115,7 +118,7 @@ def build_hybrid_decision_function(xgb_prob, catboost_prob, df):
         if check_high_risk_rows(row):
             final_class.append(0)   # force high-risk class
         else:
-            final_class.append(np.argmax(avg_prob[i]))  # row-wise argmax
+            final_class.append(decide_class(avg_prob[i])) # row-wise argmax to get class 2 if not enough fallback to class 1 logic
     return np.array(final_class)
 
 
@@ -181,9 +184,27 @@ async def model_health_check():
 @routers.post('/api/predict')
 async def predict_credit_score(request : UserCreditDataRequest):
     """
+    Predict customer credit score and risk category using ML models.
+    
+    Returns:
+        dict: Prediction with Category and Risk Segment
     """
     
-    #create an copy of each request one for storing data and one for processingd ata
+    #check for upcoming Client request from server
+    if request:
+        app.state.session += 1  #apply increment based on session state for FAST API internal architecture
+
+        if app.state.session >= max_retry_limit:
+            app.state.session = 0   #set the request to zero 
+
+            #return startette HTTP exception error on prediction server
+            return StarletteHTTPException(
+                status_code=429,
+                detail="Prediction Limit request completed",
+                headers="Retry AFter 60 seconds"
+            )
+        
+    #create an copy of each request one for storing data and one for processing data
     df = pd.DataFrame([request.model_dump()])
     df_copy = df.copy()
 
@@ -195,11 +216,30 @@ async def predict_credit_score(request : UserCreditDataRequest):
         user_xgb_prob,user_catboost_prob,df
     )
 
+    #assign the labels as based on prediction category
+    credit_score_category = ""  #create an tracking variable 
+    risk_type_category = ""
+
+    #check the predictions classess 
+    if predictions[0] == 2:
+        credit_score_category = "Standard Case Category"
+        risk_type_category = "Medium Risk "
+    elif predictions[0] == 1:
+        credit_score_category = "Good Case Category"
+        risk_type_category = "Low Risk"
+    else:
+        credit_score_category = "Poor Case Category"
+        risk_type_category = "High Risk"
+
+       
     if predictions.size == 0:
        return HTTPException(status_code=400, detail="Prediction failed")
     else:
+
+        #return JSON response to user with Category assign and Risk Category
         return {
-            "prediction":int(predictions[0])
+            "Category":credit_score_category,
+            "Risk Segment":risk_type_category   
         }
 
 
