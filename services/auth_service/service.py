@@ -23,16 +23,19 @@ with open(yaml_file_path, 'r') as yaml_content:
     config_data = yaml.safe_load(yaml_content)
 
 # Create FastAPI app
-app = FastAPI(title="OTP Authentication")
+app = FastAPI(title="OTP Authentication",version="1.0.0",description="OTP authentication for Credit smart Application")
+
+#add session state for Rate Limiting 
+app.state.otp_session = 0
+
+#add the maximum retry limit
+Max_retry_limit = 5
+
 
 #allow this api access to frontend 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "http://localhost:4200"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -44,6 +47,23 @@ async def generate_otp(request: OTP_Validation_Wrapper):
     """
     Generate OTP for the given Email Address.
     """
+
+    #check the request for rate limiting 
+    if request:
+        
+        #add the session increment for each request
+        app.state.otp_session += 1
+
+        if app.state.otp_session >= Max_retry_limit:
+
+            #assign the session as zero if condition verified
+            app.state.otp_session = 0
+
+            #return status code 429 for two many request 
+            return HTTPException(
+                status_code=429,detail="Too many request in OTP service Server"
+            )
+
     try:
         """ Request Email ID from user Though Client Session """
         email_id = request.email_address
@@ -97,7 +117,8 @@ async def generate_otp(request: OTP_Validation_Wrapper):
         smtp_port = int(config_data['notification']['server']['email-port'])
 
         with SMTP(smtp_server, smtp_port) as email_server:
-            email_server.starttls()
+            email_server.starttls()  #start TLS server
+            #login with Google credentials 
             email_server.login(
                 config_data['notification']['email']['email_sender'],
                 config_data['notification']['email']['email_password'])
