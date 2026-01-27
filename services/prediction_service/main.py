@@ -1,11 +1,11 @@
 import os
 from dotenv import load_dotenv
 import pandas as pd
+import requests
 import numpy as np
 from datetime import datetime
 from services.prediction_service.validation import UserCreditDataRequest
 from services.prediction_service.db_config import connect_with_MYSQL , create_engine
-from services.prediction_service.db_config import SQL_cursor_object 
 from services.prediction_service.db_config import close_SQL_connection , close_cursor_obj
 from fastapi import FastAPI , APIRouter , Request 
 from fastapi.exceptions import HTTPException , StarletteHTTPException
@@ -23,6 +23,49 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)  #set logging for tracking events handlers
 logger = logging.getLogger(__name__)
 
+#load SQL credentials from environment Variables
+MYSQL_USERNAME = os.getenv("MYSQL_USERNAME")
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = os.getenv("MYSQL_PORT")
+MYSQL_DATABASE = os.getenv("MYSQl_DATABASE")
+MYSQL_TABLE = os.getenv("MYSQL_TABLE")
+MYSQL_SERVICE_ID = os.getenv("MYSQL_SERVICE_ID")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
+
+#recommendation URL 
+llama3_url = "https://openrouter.ai/api/v1/chat/completions"
+
+#check for request status code 
+target_code = 200  #return actual code 
+actual_code = ''
+if requests.status_codes == target_code:
+
+    actual_code = target_code   #assign target code as actual code 
+    logger.info("Open router LLAMA3 URL Status : True")
+else:
+    actual_code = None   #store None if not connected to server
+    logger.info("Open router LLAMA3 URL Status : False")
+
+#call the database methods to connect with MYSQL connection
+mysql_connection = connect_with_MYSQL(
+    sql_user=MYSQL_USERNAME,
+    sql_password=MYSQL_PASSWORD,
+    sql_database=MYSQL_DATABASE,
+    sql_port=int(MYSQL_PORT),
+    sql_host=MYSQL_HOST
+)
+
+
+#check for mysql connection if successfully connected
+if mysql_connection is not None:
+
+    #connect and initialize cursor object
+    mysql_cursor_obj = mysql_connection.cursor(
+    )
+    
+if mysql_connection is None:
+    logger.info("Cursor object not initialized ! Check database connection")
 
 #initialize an FAST API server and routes
 app = FastAPI(title="Credit Scoring Prediction Service",
@@ -236,7 +279,40 @@ async def predict_credit_score(request : UserCreditDataRequest):
        return HTTPException(status_code=400, detail="Prediction failed")
     else:
 
+        #store the data into database
+        query = f"""
+        insert into {MYSQL_TABLE} (
+            credit_mix, annual_income,
+            num_bank_accounts, num_credit_card, num_of_loan,
+            interest_rate, delay_from_due_date,
+            changed_credit_limit, outstanding_debt,
+            total_emi_per_month,
+            risk_spending, financial_stress_index, debt_to_income_ratio,
+            payment_of_min_amount, credit_score_category, risk_category
+        ) 
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+
+        #store data into MYSQL database
+        mysql_cursor_obj.execute(query,(
+            request.credit_mix,request.annual_income,
+            request.num_bank_accounts,request.num_credit_card,
+            request.num_of_loan,request.interest_rate,request.delay_from_due_date,
+            request.changed_credit_limit,request.outstanding_debt,request.total_emi_per_month,
+            request.risk_spending,request.financial_stress_index,request.debt_to_income_ratio,
+            request.payment_of_min_amount,credit_score_category,risk_type_category
+        ))
+
+        #commit the cursor object
+        mysql_connection.commit()
+
+        #close connection status for cursor object and mysql connection
+        close_cursor_obj(mysql_cursor_obj)
+
+        close_SQL_connection(mysql_connection)
+
         #return JSON response to user with Category assign and Risk Category
+
         return {
             "Category":credit_score_category,
             "Risk Segment":risk_type_category   
@@ -249,5 +325,7 @@ app.include_router(routers)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8002)
+    uvicorn.run(app, host="0.0.0.0", port=8006)
+
+
 
