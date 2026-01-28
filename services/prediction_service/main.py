@@ -4,7 +4,7 @@ import pandas as pd
 import requests
 import numpy as np
 from datetime import datetime
-from services.prediction_service.validation import UserCreditDataRequest
+from services.prediction_service.validation import UserCreditDataRequest , RecommendationRequest
 from services.prediction_service.db_config import connect_with_MYSQL , create_engine
 from services.prediction_service.db_config import close_SQL_connection , close_cursor_obj
 from fastapi import FastAPI , APIRouter , Request 
@@ -37,8 +37,10 @@ OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
 llama3_url = "https://openrouter.ai/api/v1/chat/completions"
 
 #check for request status code 
-target_code = 200  #return actual code 
-actual_code = ''
+target_code = 200  #assign target code  
+actual_code = ''  #return actual http status code
+
+#check if target code is equal to request module status code 
 if requests.status_codes == target_code:
 
     actual_code = target_code   #assign target code as actual code 
@@ -61,8 +63,7 @@ mysql_connection = connect_with_MYSQL(
 if mysql_connection is not None:
 
     #connect and initialize cursor object
-    mysql_cursor_obj = mysql_connection.cursor(
-    )
+    mysql_cursor_obj = mysql_connection.cursor()
     
 if mysql_connection is None:
     logger.info("Cursor object not initialized ! Check database connection")
@@ -71,7 +72,8 @@ if mysql_connection is None:
 app = FastAPI(title="Credit Scoring Prediction Service",
               version="1.0.0",
               desctiption="ML -based credit scoring prediction service")
-app.state.session = 0  #define an static session to count occurence of request 
+app.state.session = 0  #define an static session to count occurence of request for Prediction service
+app.state.recommendation_session = 0   #define an static session for recommendation request
 max_retry_limit = 5    #store an maximum retry limit 
 window_limit = 60   #set 60 seconds time limit for request user 
 
@@ -318,10 +320,100 @@ async def predict_credit_score(request : UserCreditDataRequest):
             "Risk Segment":risk_type_category   
         }
 
+#create an post HTTP request method for Recommendation 
+@routers.post("/api/credit-risk-explanation")
+async def credit_risk_explaination(request : RecommendationRequest):
+
+    """
+    Generate a human-readable credit risk explanation and financial recommendations.
+
+    This endpoint accepts a validated credit profile along with the final
+    credit risk decision produced by a predictive model. It uses a
+    language model to generate:
+    - An explanation of why the user falls into the given risk category
+    - Actionable recommendations to maintain or improve credit health
+    - Cautionary points highlighting potential future risks
+
+    The endpoint does not perform risk prediction. It only provides
+    explainability and advisory insights based on the supplied model output.
+
+    :param request: Structured input containing the user's credit profile
+                    and the model-generated risk category and segment.
+    :type request: RecommendationRequest
+
+    :return: A structured explanation, recommendations, and caution points
+             validated against the CreditRecommendation schema.
+    :rtype: CreditRecommendation
+    """
+
+    #add Rate Limiting for each request for user
+    if request.user_request:
+
+        #add the session increment in recommendation session created
+        app.state.recommendation_session += 1
+
+        if app.state.recommendation_session >= max_retry_limit:
+
+            #assign the session limit as zero if retry limit exceed over defined request
+            app.state.recommendation_session = 0
+
+            #return the starlete http exception over status code as 429
+            return StarletteHTTPException(
+                status_code=429,
+                detail="Request Limit Exceeds ! Try after 60 seconds or 1 minute"
+            )
+        
+    try:
+         
+        #create an client session for openai llama3b model for explaination
+        llama3b_client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=OPEN_ROUTER_API_KEY
+        )
+
+        model_name = "meta-llama/llama-3.3-70b-instruct:free"
+        #create an json prompt for system message and user role message 
+        recommendation_message = [
+            {
+                "role":"system",
+                "content": "You are a financial advisor AI with domain knowledge in credit risk, personal finance, and debt management. A user will provide their credit and financial information in normal text, such as: income, number of loans, delays in payment, spending habits, and other relevant information.\n\nYour task is to:\n\n1. Identify the user's credit risk level: High, Medium, or Low.\n2. Analyze their financial profile using domain knowledge.\n3. Highlight strengths in the user's financial behavior.\n4. Identify areas needing improvement, focusing on:\n   - Reducing outstanding debt\n   - Avoiding delays in payments\n   - Managing risk spending\n   - Optimizing monthly EMI obligations\n   - Improving credit mix\n   - Maintaining healthy debt-to-income ratio\n5. Provide personalized, actionable recommendations based on their risk level:\n   - High risk → urgent corrective actions and preventive steps\n   - Medium risk → moderate actions and tips to prevent risk escalation\n   - Low risk → suggestions to maintain or improve financial health\n6. Optionally, provide additional advice:\n   - Reviewing interest rates\n   - Consolidating loans\n   - Automating payments\n   - Building emergency savings\n   - Improving financial stress management\n\nColumns to focus on for analysis (if mentioned or implied by user text):\n- credit_mix\n- annual_income\n- num_bank_accounts\n- num_credit_card\n- interest_rate\n- num_of_loan\n- delay_from_due_date\n- changed_credit_limit\n- outstanding_debt\n- total_emi_per_month\n- risk_spending\n- financial_stress_index\n- debt_to_income_ratio\n- payment_of_min_amount\n\nOutput Format (structured for clarity):\n\nCredit Risk Level: {High / Medium / Low}\n\nStrengths:\n- {Highlight user's financial strengths based on columns/domain knowledge}\n\nAreas to Improve:\n- {List key areas for improvement based on columns/domain knowledge}\n\nRecommendations:\n1. {Actionable recommendation 1}\n2. {Actionable recommendation 2}\n3. {Actionable recommendation 3}\n...\n\nAdditional Advice:\n- {Optional extra suggestions or domain knowledge insights}\n\nImportant: Use normal text from the user to extract values, infer patterns, and provide clear advice. Make it actionable, easy to understand, and personalized."
+            },
+            {
+                "role":"user",
+                "content":request.user_request   #user actual question 
+            }
+        ]
+
+        #create an chain for recommendation
+        completion = llama3b_client.chat.completions.create(
+            model=model_name,
+            messages=recommendation_message,
+            max_tokens=500      #return the maximum token request limit as 500 
+        )
+
+        #create an object to store the recommendation result
+        result = completion.choices[0].message.content  
+
+        #return json message if result is not empty
+        if result:
+
+            return {
+                "Recommendation_Result":result
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Empty LLM response")
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Recommendation generation failed: {str(e)}"
+        )
 
 
 # Include router in app
 app.include_router(routers)
+
+#add middleware for FAST API application
 
 if __name__ == "__main__":
     import uvicorn
