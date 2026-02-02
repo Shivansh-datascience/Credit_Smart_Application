@@ -1,107 +1,129 @@
 import streamlit as st
 import requests
-import re
+import warnings 
+warnings.filterwarnings(action="ignore") 
 
-# ---------------- PAGE CONFIG -------------------
+
+# ------------------ PAGE CONFIG ------------------
 st.set_page_config(
-    page_title="Policy RAG Chatbot",
-    page_icon="💬",
-    layout="wide"
+    page_title="Credit Smart | OTP Login",
+    page_icon="💳",
+    layout="centered"
 )
 
+# ------------------ SESSION STATE ------------------
+if "otp_sent" not in st.session_state:
+    st.session_state.otp_sent = False
+if "verified" not in st.session_state:
+    st.session_state.verified = False
 
+# ------------------ API URLs ------------------
+GENERATE_OTP_URL = "http://127.0.0.1:8004/auth/Generate_OTP"
+VERIFY_OTP_URL = "http://127.0.0.1:8004/auth/Verify_OTP"
 
-st.title("📄 Policy RAG Chatbot")
+# ------------------ CUSTOM STYLES ------------------
 st.markdown("""
-<div style="
-    background: white;
-    padding: 20px 24px;
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-    margin-bottom: 20px;
-">
-    <h1>📄 Policy RAG Chatbot</h1>
-    <p style="color:#6b7280; margin-top:4px;">
-        Ask questions related to Gold Loan, Interest Rate, KYC, Risk Management & other policies
-    </p>
-</div>
+    <style>
+    .main {
+        background-color: #f5f7fa;
+        color: #0f1115;
+        font-family: 'Segoe UI', sans-serif;
+    }
+    .stButton>button {
+        background-color: #0d6efd;
+        color: white;
+        font-weight: bold;
+        height: 45px;
+        border-radius: 8px;
+    }
+    .stTextInput>div>div>input {
+        height: 40px;
+        border-radius: 8px;
+        border: 1px solid #ccc;
+        padding-left: 10px;
+    }
+    </style>
 """, unsafe_allow_html=True)
 
+# ------------------ HEADER ------------------
+st.markdown("<h1 style='text-align:center; color:#0d6efd;'>💳 Credit Smart Application </h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align:center; color:#0d6efd;'>Secure OTP Login</h3>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#6c757d;'>Fast and safe access to your finance dashboard</p>", unsafe_allow_html=True)
+st.divider()
 
-# ---------------- SESSION STATE -------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# ------------------ EMAIL INPUT ------------------
+email = st.text_input("📧 Enter your Email", placeholder="example@email.com")
 
-# ---------------- CLEAN RESPONSE -------------------
-def clean_response(text: str) -> str:
-    text = text.replace("\\n", " ").replace("\n", " ")
-    text = re.sub(r"\*+", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+# ------------------ GENERATE OTP ------------------
+if not st.session_state.otp_sent:
+    if st.button("📨 Generate OTP", use_container_width=True):
 
-# ---------------- RENDER CHAT -------------------
-def render_chat():
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+        if not email:
+            st.error("⚠️ Please enter your email address")
+        else:
+            payload = {"email_address": email}
+            response = requests.post(GENERATE_OTP_URL, json=payload)
 
-render_chat()
+            if response.status_code == 200:
+                st.success("✅ OTP sent to your email")
+                st.session_state.otp_sent = True
+            else:
+                st.error("❌ Failed to generate OTP. Try again.")
 
-def format_to_points(text: str) -> str:
-    # Clean unwanted characters
-    text = text.replace("\\n", " ").replace("\n", " ")
-    text = text.replace("*", "")
-    text = " ".join(text.split())
+# ------------------ OTP SECTION ------------------
+if st.session_state.otp_sent and not st.session_state.verified:
+    st.divider()
+    st.markdown("<h4 style='color:#0d6efd;'>Enter the OTP received in your email</h4>", unsafe_allow_html=True)
+    otp = st.text_input("🔢 OTP", max_chars=6, type="password", placeholder="6-digit code")
 
-    # Split into logical sentences
-    sentences = text.split(". ")
+    col1, col2 = st.columns(2)
 
-    # Convert to bullet points
-    bullets = []
-    for s in sentences:
-        s = s.strip()
-        if len(s) > 10:
-            bullets.append(f"- {s.rstrip('.')}")
-    
-    return "\n".join(bullets)
+    # 🔄 Resend OTP
+    with col1:
+        if st.button("🔄 Resend OTP", use_container_width=True):
+            payload = {"email_address": email}
+            response = requests.post(GENERATE_OTP_URL, json=payload)
 
-# ---------------- USER INPUT -------------------
-user_query = st.chat_input("Type your question here...")
+            if response.status_code == 200:
+                st.success("✅ OTP resent successfully")
+            else:
+                st.error("❌ OTP resend failed")
 
-if user_query:
-    # 1️⃣ Show user message ONLY on frontend
-    st.session_state.messages.append({
-        "role": "user",
-        "content": user_query
-    })
-
-    render_chat()
-
-    # 2️⃣ Call backend (send query silently)
-    with st.chat_message("assistant"):
-        with st.spinner("🔍 Searching policy documents… please wait"):
-            try:
-                response = requests.post(
-                    "http://127.0.0.1:8001/api/chat",
-                    json={"query": user_query},
-                    timeout=200
-                )
+    # ✅ Verify OTP
+    with col2:
+        if st.button("✅ Verify OTP", use_container_width=True):
+            if not otp:
+                st.error("⚠️ Please enter the OTP")
+            else:
+                payload = {"email_address": email, "user_otp": otp}
+                response = requests.post(VERIFY_OTP_URL, json=payload)
 
                 if response.status_code == 200:
-                    backend_answer = response.json().get("response", "")
-                    final_answer = format_to_points(backend_answer)
+                    st.success("🎉 OTP verified! Welcome to Credit Smart")
+                    st.balloons()
+                    st.session_state.verified = True
                 else:
-                    final_answer = "❌ Unable to fetch response from server."
+                    # Handle backend messages like "No otp found in session"
+                    try:
+                        message = response.json()[0].lower()
+                        if "no otp found" in message:
+                            st.warning("⚠️ No OTP found for this email. Please generate OTP first.")
+                        elif "invalid otp" in message:
+                            st.error("❌ Invalid OTP. Please try again.")
+                        else:
+                            st.info(f"ℹ️ {response.json()[0]}")
+                    except:
+                        st.error("❌ Unexpected server response")
 
-            except requests.exceptions.Timeout:
-                final_answer = "⏳ Response is taking longer than expected. Please retry."
-            except Exception as e:
-                final_answer = f"❌ Error: {e}"
+# ------------------ DASHBOARD BUTTON ------------------
+if st.session_state.verified:
+    st.divider()
+    st.markdown("<h4 style='color:#0d6efd;'>✅ Access your dashboard</h4>", unsafe_allow_html=True)
+    if st.button("➡️ Go to Dashboard", use_container_width=True):
+        # Navigate to dashboard page (if using multipage Streamlit app)
+        st.experimental_set_query_params(page="dashboard")  # example for multipage navigation
+        st.success("Redirecting to dashboard...")
 
-        st.markdown(final_answer)
-
-    # 3️⃣ Store ONLY assistant answer (not user echo)
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": final_answer
-    })
+# ------------------ FOOTER ------------------
+st.markdown("<hr>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#6c757d;'>© 2026 Credit Smart Finance. All rights reserved.</p>", unsafe_allow_html=True)
