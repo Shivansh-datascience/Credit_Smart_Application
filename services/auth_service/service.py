@@ -1,6 +1,7 @@
 import yaml
 from smtplib import SMTP 
 import requests
+import logging
 from email.message import  EmailMessage
 from fastapi import FastAPI, HTTPException, Request, APIRouter
 from auth.OTP_generator import connect_redis_server, generate_OTP_authentication
@@ -8,14 +9,38 @@ from auth.OTP_session import store_otp_in_redis, get_otp_from_redis, verify_user
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.wsgi import WSGIMiddleware
 from .validation import OTP_Validation_Wrapper , OTP_Verification_Wrapper  # Fixed import
+from .validation import UserRegisteration , UserLogin  #import for User registeration and login 
 from dotenv import load_dotenv
 import os
 import uvicorn
+import pymysql
 
 load_dotenv()
 
 #load API key from environment variable s
 fast2_sms_api_key = os.getenv("fast2_sms_api_key")
+MYSQL_USERNAME = os.getenv("MYSQL_USERNAME")
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = os.getenv("MYSQL_PORT")
+MYSQL_DATABASE = os.getenv("MYSQl_DATABASE")
+MYSQL_TABLE = os.getenv("MYSQL_TABLE_1")
+MYSQL_SERVICE_ID = os.getenv("MYSQL_SERVICE_ID")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+#connect with mysql database
+connection = pymysql.connect(user=MYSQL_USERNAME,
+                             password=MYSQL_PASSWORD,
+                             database=MYSQL_DATABASE,
+                             port=int(MYSQL_PORT),
+                             host=MYSQL_HOST)
+
+if connection !=None:
+
+    logging.info("Connection status for MYSQL : True")
+connection_cursor_obj = connection.cursor()  #create an cursor object to execute dynamic SQL queries
 
 # Load YAML file (fixed relative path)
 yaml_file_path = r"D:\credit_scoring_project\services\auth_service\auth_config.yaml"
@@ -158,6 +183,69 @@ async def verify_otp(request_2 : OTP_Verification_Wrapper):
     else:
         return {"Message Status : No otp found in session"}
     
+#add routers for log in and registers for user 
+@routers.post('/auth/register')
+async def register_user(request_3 : UserRegisteration):
+
+    """
+Registers a new user in the Credit Smart application.
+
+This API endpoint accepts user registration details such as full name, email,
+phone number, username, and password. It validates that no field is empty and
+then inserts the user record into the MySQL database.
+
+Raises:
+    HTTPException: 
+        - 400 Bad Request if any required field is missing/empty.
+        - 500 Internal Server Error if database insertion fails.
+
+Returns:
+    dict: Success message after user registration is completed.
+"""
+
+    #check user request to store the User Registeration data into Database
+    if not request_3:
+
+        raise HTTPException(status_code=400,detail="Bad Request")
+
+
+        #check whether if any field is empty of not 
+    if (request_3.full_name.strip() == "" or 
+        request_3.email.strip() == "" or 
+        request_3.Username.strip() == "" or 
+        request_3.phone.strip() == "" or 
+        request_3.password.strip() == ""):
+        
+        raise HTTPException(status_code=400,detail="All fields are required")
+        
+    #store the registeration detail to mysql database
+    # store the registration detail to mysql database
+    registeration_query = f"""
+        INSERT INTO {MYSQL_TABLE} (full_name, email, phone, password, Username)
+        VALUES (%s, %s, %s, %s, %s)
+    """
+
+    connection_cursor_obj.execute(registeration_query, (
+        request_3.full_name,
+        request_3.email,
+        request_3.phone,
+        request_3.password,
+        request_3.Username
+    ))
+    
+    #create an commit in mysql connection to store data 
+    connection.commit()
+
+        
+    #close the cursor object and connection for each request
+    connection_cursor_obj.close()
+
+    connection.close()
+
+    return {
+        "message": "User registered successfully"
+    }
+
 # Include routers checkpoints in FAST API backend service
 app.include_router(routers)
 
