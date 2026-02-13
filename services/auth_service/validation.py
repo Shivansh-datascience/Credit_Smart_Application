@@ -28,10 +28,8 @@ class UserLogin(BaseModel):
 #wrapper for update account username and password
 class UpdateUsername(BaseModel):
     email : str = Field(..., description="Email for User")
-    old_username : str = Field(..., description="user old Username")
     new_username : str = Field(..., description="user new Username")
 
 class UpdatePassword(BaseModel):
     email : str = Field(..., description="email for User")
-    old_password : str = Field(..., description="user old password")
     new_password : str = Field(..., description="user new password")
