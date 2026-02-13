@@ -2,6 +2,7 @@ import yaml
 from smtplib import SMTP 
 import requests
 import logging
+import hashlib
 from email.message import  EmailMessage
 from fastapi import FastAPI, HTTPException, Request, APIRouter
 from auth.OTP_generator import connect_redis_server, generate_OTP_authentication
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.wsgi import WSGIMiddleware
 from .validation import OTP_Validation_Wrapper , OTP_Verification_Wrapper  # Fixed import
 from .validation import UserRegisteration , UserLogin  #import for User registeration and login 
+from .validation import UpdateUsername , UpdatePassword
 from dotenv import load_dotenv
 import os
 import uvicorn
@@ -245,6 +247,79 @@ Returns:
     return {
         "message": "User registered successfully"
     }
+
+#add routers to login authentication for user 
+@routers.post('/auth/login')
+async def user_login(request_4 : UserLogin):
+
+    """
+    """
+    if request_4.Username.strip() == "" or request_4.password.strip == "":
+
+        raise HTTPException(
+            status_code=400,
+            detail="username and Password cannot be empty"
+        )
+    
+    #verify user login authentication by call procedure
+    procedure_name = "user_login"
+    login_query = f""" CALL {procedure_name}(%s)"""
+
+    connection_cursor_obj.execute(login_query,(request_4.Username))
+
+    #fetch the password from db
+    result = connection_cursor_obj.fetchone()  #return type tuple
+ 
+    if result is None:
+
+        return {"Message":"No Username and password found ! Invalid Credentials"}
+    
+    fetched_username = result[0].strip()
+    fetched_password = result[1].strip()
+
+    print(f" Fetch password {fetched_password} and {fetched_username}")
+    #check the user login request and password but using comparision operator 
+    if request_4.password.strip() == fetched_password:
+        return {"Message":"Login Success"}
+    else:
+        return {"Message":"Invalid Password"}
+    
+#add Update functionality to update password based on user email
+@routers.put('/auth/update_password')
+async def update_user_password(payload : UpdatePassword):
+
+    """
+    Docstring for update_user_password
+    
+    :param payload: Description
+    :type payload: UpdatePassword
+    """
+
+    #connect with SQL to fetch registered user id
+    connection_cursor_obj.execute(f"SELECT user_id from {MYSQL_TABLE} WHERE email = %s",(payload.email.strip()))
+
+    #fetch the tuple data 
+    user = connection_cursor_obj.fetchone()
+
+    print(user)
+
+    if not user:
+
+        raise HTTPException(status_code=402,detail="User Not found")
+    
+    #fetch user id from result tuple
+    user_id = user[0]
+
+    #call procedure to update password 
+    connection_cursor_obj.execute("CALL Update_Password(%s,%s)",(
+        payload.new_password.strip(),
+        user_id
+        ))
+
+    #make commit connection 
+    connection.commit()
+
+    return {"Message":"Password Updated Successfully"}
 
 # Include routers checkpoints in FAST API backend service
 app.include_router(routers)
